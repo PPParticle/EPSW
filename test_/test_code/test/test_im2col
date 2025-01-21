@@ -1,0 +1,99 @@
+// https://mp.weixin.qq.com/s/lqVsMDutBwsjiiM_NkGsAg
+
+// outH = (inH + 2*padding - kernelH/W) / stride + 1 = H - K + 1
+// inH = W - K + 1
+
+
+// input [Batch, inChannel, inHeight, inWidth]
+// conv kernel [kernelC, kernelH, kernelW]
+// im2col_input (stride=1) [kernelC*kernelH*kernelW, (inHeight-kernelH+1)*(inWidth-kernelW+1)]
+//                      = [kernelC*kernelH*kernelW, outWidth*outHeight]
+// im2col feature map
+float *src_im2col = new float[outWidth * outHeight * kernelH * kernelW * inChannel];
+const int stride = kernelW * kernelH * outHeight * outWidth;
+const int outSize = outHeight * outWidth;
+const int kernelSize = kernelH * kernelW;
+
+for(int cc = 0; cc < inChannel; cc++){
+            const float *src0 = src + cc * kernelH * kernelW * inChannel;
+            int dst_idx = Stride * cc;
+            for(int i = 0; i < kernelH; i++){
+                for(int j = 0; j < kernelW; j++){
+
+                    for(int x = 0; x < outHeight; x++){
+                        for(int y = 0; y < outWidth; y++){
+                            // kernel coordination, i indicate the element in one kernel
+                            int row = x * StrideH + i;
+                            int col = y * StrideW + j;
+                            int ori_idx = row * inWidth + col;
+                            src_im2col[dst_idx] = src0[ori_idx];
+                            dst_idx++;      
+                        }
+                    }
+                }
+            }
+        }
+
+// im2col kernel 
+int Stride = 0;
+    // outChannel = kernel number
+    for(int cc = 0; cc < outChannel; cc++){
+        int c = cc;
+        const float* k0 = kernel + c * inChannel * kernelSize;
+        Stride =  kernelSize * inChannel;
+        float* destptr = dest + c * Stride;
+        for(int i = 0; i < inChannel * kernelSize; i++){
+            destptr[0] = k0[0];
+            destptr += 1;
+            k0 += 1;
+        }
+    }
+// kernel transformation 需要重新考虑，特别是第二个for循环
+    void ConvolutionLayerSgemm::convolutionTransformKernel(float *const &kernel, const int &kernelW, const int &kernelH, float* &dest, const int &inChannel,
+                            const int &outChannel){
+        
+        int kernelSize = kernelH * kernelW;
+        int ccOutChannel = 0;
+        int ccRemainOutChannel = 0;
+        int Stride = 4 * kernelSize * inChannel;
+        
+        // kernel pack 4*4
+        ccOutChannel = outChannel >> 2;
+        ccRemainOutChannel = ccOutChannel << 2;
+
+        for(int cc = 0;  cc < ccOutChannel; cc ++){
+            int c = cc << 2;
+            const float* k0 = kernel + c * inChannel * kernelSize;
+            const float* k1 = kernel + (c + 1) * inChannel * kernelSize;
+            const float* k2 = kernel + (c + 2) * inChannel * kernelSize;
+            const float* k3 = kernel + (c + 3) * inChannel * kernelSize;
+
+            float* destptr = dest + (c / 4) * Stride;
+
+            for(int i = 0; i < inChannel * kernelSize; i++){
+                destptr[0] = k0[0];
+                destptr[1] = k1[0];
+                destptr[2] = k2[0];
+                destptr[3] = k3[0];
+
+                destptr += 4;
+
+                k0 += 1;
+                k1 += 1;
+                k2 += 1;
+                k3 += 1;
+            }
+        }
+
+        for(int cc = ccRemainOutChannel; cc < outChannel; cc++){
+            int c = cc;
+            const float* k0 = kernel + c * inChannel * kernelSize;
+            float* destptr = dest + (c / 4 + c % 4) * Stride;
+            for(int i = 0; i < inChannel * kernelSize; i++){
+                destptr[0] = k0[0];
+                destptr += 1;
+                k0 += 1;
+            }
+        }
+
+    }
